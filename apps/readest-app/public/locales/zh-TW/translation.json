@@ -2585,5 +2585,13 @@
   "Note Template": "筆記範本",
   "Each highlight is rendered as Markdown with Nunjucks, then sent to Notion as blocks": "每則螢光標記會以 Nunjucks 轉為 Markdown，再以區塊形式傳送到 Notion",
   "Quotes take the highlight color, and > [!NOTE] becomes a callout": "引文會套用螢光標記的顏色，> [!NOTE] 會變成標註區塊",
-  "Variables: {{variables}}": "變數：{{variables}}"
+  "Variables: {{variables}}": "變數：{{variables}}",
+  "Vocabulary": "生詞本",
+  "Add to Vocabulary": "加入生詞本",
+  "In Vocabulary": "已在生詞本",
+  "Base form": "原形",
+  "Also": "其他",
+  "{{count}} words_other": "{{count}} 個詞",
+  "Words you add from the translate popup will appear here.": "在翻譯彈窗裡加入生詞本的詞會顯示在這裡。",
+  "Vocabulary exported": "生詞本已匯出"
 }
