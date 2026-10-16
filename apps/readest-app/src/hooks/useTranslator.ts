@@ -7,7 +7,12 @@ import {
   isTranslatorAvailable,
   TranslatorName,
 } from '@/services/translators';
-import { getFromCache, storeInCache, UseTranslatorOptions } from '@/services/translators';
+import {
+  getFromCache,
+  storeInCache,
+  TranslationPassage,
+  UseTranslatorOptions,
+} from '@/services/translators';
 import { polish, preprocess } from '@/services/translators';
 import { eventDispatcher } from '@/utils/event';
 import { getLocale } from '@/utils/misc';
@@ -64,12 +69,17 @@ export function useTranslator({
   const translate = useCallback(
     async (
       input: string[],
-      options?: { source?: string; target?: string; useCache?: boolean },
+      options?: {
+        source?: string;
+        target?: string;
+        useCache?: boolean;
+        passage?: TranslationPassage;
+      },
     ): Promise<string[]> => {
       const sourceLanguage = options?.source || sourceLang;
       const targetLanguage = options?.target || targetLang || getLocale();
       const useCache = options?.useCache ?? false;
-      const context = { promptId, bookTitle, bookAuthor };
+      const context = { promptId, bookTitle, bookAuthor, passage: options?.passage };
       const activeTranslator = translators.find((t) => t.name === selectedProvider);
       const cacheProvider =
         activeTranslator?.getCacheKey?.(sourceLanguage, targetLanguage, context) ??

@@ -11,7 +11,7 @@ import { md5Fingerprint } from '@/utils/md5';
 import { renderPrompt } from '@/services/translators/custom/prompts';
 import {
   createChatModel,
-  loadSDK,
+  generateReply,
   stripReasoning,
 } from '@/services/translators/custom/openaiCompatible';
 
@@ -175,8 +175,7 @@ export const lookupInContext = async (
   const timer = setTimeout(abort, REQUEST_TIMEOUT_MS);
   signal.addEventListener('abort', abort, { once: true });
   try {
-    const [{ generateText }] = await loadSDK();
-    const { text } = await generateText({
+    const text = await generateReply(translator.baseUrl ?? '', {
       model: await createChatModel(translator),
       system,
       prompt,

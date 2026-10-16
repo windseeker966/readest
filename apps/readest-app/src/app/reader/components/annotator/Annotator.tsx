@@ -2760,6 +2760,9 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets; gridInsets?:
         <TranslatorPopup
           bookKey={bookKey}
           text={selection?.text as string}
+          // The sentence or two around it is what fixes the sense of a word;
+          // the dictionary's 1000-char window would mostly be billed for nothing.
+          passage={selection?.range ? buildSelectionContext(selection.range, 400) : undefined}
           position={translatorPopupPosition}
           trianglePosition={trianglePosition}
           popupWidth={transPopupWidth}
