@@ -22,9 +22,11 @@ import {
 import { getLLMTranslators } from '@/store/customTranslatorStore';
 import { isCustomTranslatorName } from '@/services/translators/custom';
 import {
+  isCardSelection,
   lookupSelection,
   type SelectionEntry,
 } from '@/services/translators/custom/selectionLookup';
+import type { VocabEntry } from '@/types/vocab';
 import Select from '@/components/Select';
 
 const notSupportedLangs = [''];
@@ -47,6 +49,10 @@ interface TranslatorPopupProps {
   popupWidth: number;
   popupHeight: number;
   onDismiss?: () => void;
+  /** The vocabulary entry for `text`, when it has one. */
+  vocabEntry?: VocabEntry;
+  onAddToVocab?: (card: SelectionEntry) => void | Promise<void>;
+  onRemoveFromVocab?: (entry: VocabEntry) => void | Promise<void>;
 }
 
 interface TranslatorType {
@@ -64,6 +70,9 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
   popupWidth,
   popupHeight,
   onDismiss,
+  vocabEntry,
+  onAddToVocab,
+  onRemoveFromVocab,
 }) => {
   const _ = useTranslation();
   const { token } = useAuth();
@@ -218,6 +227,18 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
     !!entry &&
     !!(entry.translation || entry.pronunciation || entry.meaning || entry.baseForm || entry.also);
 
+  const [savingWord, setSavingWord] = useState(false);
+  const canSaveWord = !!onAddToVocab && !!onRemoveFromVocab && isCardSelection(text);
+  const handleToggleVocab = async () => {
+    setSavingWord(true);
+    try {
+      if (vocabEntry) await onRemoveFromVocab?.(vocabEntry);
+      else await onAddToVocab?.(entry ?? {});
+    } finally {
+      setSavingWord(false);
+    }
+  };
+
   return (
     <div>
       <Popup
@@ -313,6 +334,17 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
                 </div>
               ) : (
                 <p className='text-base'>{translation || _('No translation available.')}</p>
+              )}
+              {/* SubWord's ＋生词 / ✓生词: a word goes into the vocabulary with the
+                  card it got, and comes out again from the same button. */}
+              {canSaveWord && !error && (
+                <button
+                  className='btn btn-sm btn-outline mt-3'
+                  disabled={savingWord}
+                  onClick={handleToggleVocab}
+                >
+                  {vocabEntry ? `✓ ${_('In Vocabulary')}` : `＋ ${_('Add to Vocabulary')}`}
+                </button>
               )}
             </div>
           )}

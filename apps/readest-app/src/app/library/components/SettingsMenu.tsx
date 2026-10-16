@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import React, { useEffect, useState } from 'react';
-import { PiUserCircle, PiUserCircleCheck, PiGear } from 'react-icons/pi';
+import { PiUserCircle, PiUserCircleCheck, PiGear, PiBookOpenText } from 'react-icons/pi';
 import { PiSun, PiMoon } from 'react-icons/pi';
 import { TbSunMoon } from 'react-icons/tb';
 import { MdCloudSync, MdSync, MdSyncProblem, MdOutlineSensors } from 'react-icons/md';
@@ -9,6 +9,7 @@ import { useAppRouter } from '@/hooks/useAppRouter';
 import { isTauriAppPlatform, isWebAppPlatform } from '@/services/environment';
 import { DOWNLOAD_READEST_URL } from '@/services/constants';
 import { setBackupDialogVisible } from '@/app/library/components/BackupWindow';
+import { setVocabDialogVisible } from '@/app/library/components/VocabWindow';
 import { setCacheManagerDialogVisible } from '@/app/library/components/CacheManagerWindow';
 import { useAuth } from '@/context/AuthContext';
 import { useEnv } from '@/context/EnvContext';
@@ -179,6 +180,11 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
   const handleBackupRestore = () => {
     setIsDropdownOpen?.(false);
     setBackupDialogVisible(true);
+  };
+
+  const handleVocabulary = () => {
+    setIsDropdownOpen?.(false);
+    setVocabDialogVisible(true);
   };
 
   const handleManageCache = () => {
@@ -382,6 +388,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
         />
       )}
       <hr aria-hidden='true' className='border-base-200 my-1' />
+      <MenuItem label={_('Vocabulary')} Icon={PiBookOpenText} onClick={handleVocabulary} />
       {appService?.hasWindow && (
         <MenuItem
           label={_('Open Book in New Window')}

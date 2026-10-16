@@ -2541,5 +2541,13 @@
   "{{count}} voices available_other": "可用语音 {{count}} 个",
   "Multilingual": "多语言",
   "Expressive": "富有表现力",
-  "Show Page Thumbnails": "显示页面缩略图"
+  "Show Page Thumbnails": "显示页面缩略图",
+  "Vocabulary": "生词本",
+  "Add to Vocabulary": "加入生词本",
+  "In Vocabulary": "已在生词本",
+  "Base form": "原形",
+  "Also": "其他",
+  "{{count}} words_other": "{{count}} 个词",
+  "Words you add from the translate popup will appear here.": "在翻译弹窗里加入生词本的词会显示在这里。",
+  "Vocabulary exported": "生词本已导出"
 }

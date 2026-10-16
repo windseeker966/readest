@@ -15,6 +15,9 @@ import { NativeTouchEventType } from '@/types/system';
 import { getLocale, getOSPlatform, makeSafeFilename, uniqueId } from '@/utils/misc';
 import { useThemeStore } from '@/store/themeStore';
 import { useBookDataStore } from '@/store/bookDataStore';
+import { ensureVocabLoaded, sentenceAround, useVocabStore } from '@/store/vocabStore';
+import type { VocabEntry } from '@/types/vocab';
+import type { SelectionEntry } from '@/services/translators/custom/selectionLookup';
 import { getBookProgress, useBookProgress } from '@/store/readerProgressStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useReaderStore } from '@/store/readerStore';
@@ -195,6 +198,10 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets; gridInsets?:
   const containerRef = React.useRef<HTMLDivElement>(null);
 
   const [selection, setSelection] = useState<TextSelection | null>(null);
+  const vocabEntry = useVocabStore((s) => (selection?.text ? s.find(selection.text) : undefined));
+  useEffect(() => {
+    ensureVocabLoaded(envConfig);
+  }, [envConfig]);
   const [translationEpoch, setTranslationEpoch] = useState(0);
   const [showAnnotPopup, setShowAnnotPopup] = useState(false);
   const [showDictionaryPopup, setShowDictionaryPopup] = useState(false);
@@ -1751,6 +1758,71 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets; gridInsets?:
     views.forEach((view) => view?.addAnnotation(annotation));
   };
 
+  // Saving a word to the vocabulary also highlights it in yellow, whatever the
+  // default highlight style, so saved words stand out while reading; removing
+  // it takes that highlight away again. A highlight the reader made before
+  // saving the word is left alone in both directions.
+  const handleAddToVocab = (card: SelectionEntry) => {
+    if (!selection || !selection.text) return;
+    const { booknotes: annotations = [] } = config;
+    const cfi = selection.popup ? selection.cfi : view?.getCFI(selection.index, selection.range);
+    let noteId: string | undefined;
+    const highlighted =
+      !!cfi &&
+      annotations.some((a) => a.cfi === cfi && a.type === 'annotation' && a.style && !a.deletedAt);
+    if (cfi && !highlighted) {
+      const annotation: BookNote = {
+        id: uniqueId(),
+        type: 'annotation',
+        cfi,
+        style: 'highlight',
+        color: 'yellow',
+        text: selection.text,
+        note: '',
+        page: progress.page,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      annotations.push(annotation);
+      getViewsById(bookKey.split('-')[0]!).forEach((v) => v?.addAnnotation(annotation));
+      const updatedConfig = updateBooknotes(bookKey, annotations);
+      if (updatedConfig) saveConfig(envConfig, bookKey, updatedConfig, settings);
+      noteId = annotation.id;
+      setSelection({ ...selection, cfi, annotated: true });
+    }
+    const passage = selection.popup
+      ? { before: '', after: '' }
+      : buildSelectionContext(selection.range, 400);
+    const title = bookData.book?.title;
+    useVocabStore.getState().add({
+      word: selection.text,
+      sentence: sentenceAround(passage.before, selection.text, passage.after),
+      meaning: card.meaning,
+      phonetic: card.pronunciation,
+      form: card.baseForm,
+      note: card.also,
+      source: title ? `Readest：${title}` : 'Readest',
+      bookHash: bookKey.split('-')[0]!,
+      bookTitle: title,
+      cfi,
+      noteId,
+    });
+  };
+
+  const handleRemoveFromVocab = (entry: VocabEntry) => {
+    if (entry.noteId) {
+      const { booknotes: annotations = [] } = config;
+      const existing = annotations.find((a) => a.id === entry.noteId && !a.deletedAt);
+      if (existing) {
+        getViewsById(bookKey.split('-')[0]!).forEach((v) => removeBookNoteOverlays(v, existing));
+        existing.deletedAt = nextBooknoteStamp(existing);
+        const updatedConfig = updateBooknotes(bookKey, annotations);
+        if (updatedConfig) saveConfig(envConfig, bookKey, updatedConfig, settings);
+      }
+    }
+    useVocabStore.getState().remove(entry.id);
+  };
+
   /**
    * Toggle the `global` flag on the annotation currently anchored at
    * `selection.cfi`. When enabling, fan out overlays for every other
@@ -2768,6 +2840,9 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets; gridInsets?:
           popupWidth={transPopupWidth}
           popupHeight={transPopupHeight}
           onDismiss={handleDismissPopupShowToolbar}
+          vocabEntry={vocabEntry}
+          onAddToVocab={handleAddToVocab}
+          onRemoveFromVocab={handleRemoveFromVocab}
         />
       )}
       {noteEditorInSheet && (
