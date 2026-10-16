@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Popup from '@/components/Popup';
 import { Position } from '@/utils/sel';
+import { getLocale } from '@/utils/misc';
 import { useEnv } from '@/context/EnvContext';
 import { useReaderStore } from '@/store/readerStore';
 import { useBookDataStore } from '@/store/bookDataStore';
@@ -18,6 +19,12 @@ import {
   getTranslators,
   isTranslatorAvailable,
 } from '@/services/translators';
+import { getLLMTranslators } from '@/store/customTranslatorStore';
+import { isCustomTranslatorName } from '@/services/translators/custom';
+import {
+  lookupSelection,
+  type SelectionEntry,
+} from '@/services/translators/custom/selectionLookup';
 import Select from '@/components/Select';
 
 const notSupportedLangs = [''];
@@ -70,6 +77,8 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
   const [targetLang, setTargetLang] = useState(settings.globalReadSettings.translateTargetLang);
   const [provider, setProvider] = useState(settings.globalReadSettings.translationProvider);
   const [translation, setTranslation] = useState<string | null>(null);
+  // Streamed card from an LLM translator; `translation` stays for the rest.
+  const [entry, setEntry] = useState<SelectionEntry | null>(null);
   const [detectedSourceLang, setDetectedSourceLang] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
@@ -124,16 +133,52 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [translators, token]);
 
+  // The user's LLM behind the selected provider, when it is one: that path
+  // streams a card instead of waiting for a whole translation.
+  const llmTranslator = useMemo(
+    () =>
+      isCustomTranslatorName(provider)
+        ? getLLMTranslators().find((t) => `custom:${t.id}` === provider)
+        : undefined,
+    [provider],
+  );
+
   useEffect(() => {
     setLoading(true);
+    // A new selection or provider cancels the request in flight; its late
+    // deltas must not land on the new one.
+    const controller = new AbortController();
     const fetchTranslation = async () => {
       setError(null);
       setErrorDetail(null);
       setTranslation(null);
+      setEntry(null);
 
       try {
         const input = text.replaceAll('\n', '').trim();
+        if (llmTranslator) {
+          await lookupSelection(
+            llmTranslator,
+            {
+              text: input,
+              passage,
+              sourceLang,
+              targetLang: targetLang || getLocale(),
+              promptId: getViewSettings(bookKey)?.translationPromptId,
+              bookTitle: book?.title,
+              bookAuthor: book?.author,
+            },
+            (partial) => {
+              if (controller.signal.aborted) return;
+              setEntry(partial);
+              setLoading(false);
+            },
+            controller.signal,
+          );
+          return;
+        }
         const result = await translate([input], { passage });
+        if (controller.signal.aborted) return;
         const translatedText = result[0];
         const detectedSource = null;
 
@@ -149,6 +194,7 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
           setDetectedSourceLang(detectedSource);
         }
       } catch (err) {
+        if (controller.signal.aborted) return;
         console.error(err);
         // Only blame a missing login when this provider actually needs one;
         // Azure/Google/Yandex run without a Readest account in the app.
@@ -159,13 +205,18 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
           setErrorDetail(err instanceof Error ? err.message : String(err));
         }
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
 
     fetchTranslation();
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, token, sourceLang, targetLang, provider, translate]);
+  }, [text, token, sourceLang, targetLang, provider, translate, llmTranslator]);
+
+  const hasEntry =
+    !!entry &&
+    !!(entry.translation || entry.pronunciation || entry.meaning || entry.baseForm || entry.also);
 
   return (
     <div>
@@ -180,13 +231,16 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
         // browser discards, leaving four implicit auto rows that sized to their
         // content and pushed the translated pane and the provider footer past
         // the popup's own max height with nothing scrollable to reach them.
-        // `minmax(0,...)` rather than a bare `1fr`: a bare fr floors at
-        // min-content, so the rows would refuse to shrink inside the capped
-        // popup and overflow it again.
-        className='grid h-full select-text grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)_auto]'
+        // `minmax(0,1fr)` rather than a bare `1fr`: a bare fr floors at
+        // min-content, so the row would refuse to shrink inside the capped
+        // popup and overflow it again. Only the translated pane is fr: with
+        // both panes fr they split the popup in half, and a tall card
+        // stretched the one-word original pane to match it. The original pane
+        // sizes to its text instead, capped so a selected paragraph scrolls.
+        className='grid h-full select-text grid-rows-[auto_auto_minmax(0,1fr)_auto]'
         onDismiss={onDismiss}
       >
-        <div className='overflow-y-auto p-4 font-sans'>
+        <div className='max-h-40 overflow-y-auto p-4 font-sans'>
           <div className='mb-2 flex items-center justify-between'>
             <h1 className='text-sm font-medium'>{_('Original Text')}</h1>
             <Select
@@ -235,6 +289,26 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
                   <p className='text-base text-red-600'>{error}</p>
                   {errorDetail && (
                     <p className='mt-1 break-words text-xs text-base-content/60'>{errorDetail}</p>
+                  )}
+                </div>
+              ) : hasEntry ? (
+                <div className='text-base'>
+                  {entry.translation && <p>{entry.translation}</p>}
+                  {entry.pronunciation && (
+                    <p className='text-sm text-base-content/70'>{entry.pronunciation}</p>
+                  )}
+                  {entry.meaning && <p className='font-medium'>{entry.meaning}</p>}
+                  {entry.baseForm && (
+                    <p className='mt-1 text-sm'>
+                      <span className='text-base-content/60'>{_('Base form')}: </span>
+                      {entry.baseForm}
+                    </p>
+                  )}
+                  {entry.also && (
+                    <p className='mt-1 text-sm'>
+                      <span className='text-base-content/60'>{_('Also')}: </span>
+                      {entry.also}
+                    </p>
                   )}
                 </div>
               ) : (

@@ -15,7 +15,7 @@ const REQUEST_TIMEOUT_MS = 60_000;
 
 const SINGLE_RULES =
   "Output only the translation of the user's text, without explanations, notes or quotation marks.";
-const PASSAGE_RULES =
+export const PASSAGE_RULES =
   'The user\'s message is JSON: "text" is an excerpt selected from the book, "before" and "after" are the passage around it. ' +
   'Translate only "text", with the sense it has in that passage, keeping its form (a word stays a word, a phrase a phrase). ' +
   'Output only the translation, without explanations, notes or quotation marks.';
@@ -97,6 +97,46 @@ export const generateReply = async (
   }
   const { text } = await generateText(options);
   return text;
+};
+
+type StreamTextOptions = Parameters<typeof import('ai').streamText>[0];
+
+/**
+ * `streamText` counterpart of {@link generateReply}: `onText` gets the reply
+ * so far after every delta, so the popup can render the first line while the
+ * rest is still being generated. Reasoning deltas are not text and are left
+ * out. Returns the complete reply.
+ */
+export const streamReply = async (
+  endpoint: string,
+  options: StreamTextOptions,
+  onText: (soFar: string) => void,
+): Promise<string> => {
+  const [{ streamText }] = await loadSDK();
+  const run = async (providerOptions?: typeof NO_THINKING_OPTIONS) => {
+    let text = '';
+    // Errors are stream parts, not rejections: without this they would only
+    // reach the console.
+    const result = streamText({ ...options, ...(providerOptions && { providerOptions }) });
+    for await (const part of result.fullStream) {
+      if (part.type === 'text-delta') {
+        text += part.text;
+        onText(text);
+      } else if (part.type === 'error') {
+        throw part.error;
+      }
+    }
+    return text;
+  };
+  if (!thinkingSwitchRejected.has(endpoint)) {
+    try {
+      return await run(NO_THINKING_OPTIONS);
+    } catch (err) {
+      if (!rejectsThinkingSwitch(err)) throw err;
+      thinkingSwitchRejected.add(endpoint);
+    }
+  }
+  return run();
 };
 
 /** Splits a `[1]\n…\n\n[2]\n…` reply; returns null unless it holds exactly blocks 1..n. */
