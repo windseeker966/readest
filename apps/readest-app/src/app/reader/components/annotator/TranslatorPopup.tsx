@@ -12,6 +12,7 @@ import { useTranslator } from '@/hooks/useTranslator';
 import { TRANSLATOR_LANGS } from '@/services/constants';
 import { isCustomTranslatorAllowed } from '@/utils/access';
 import {
+  TranslationPassage,
   UseTranslatorOptions,
   getTranslatorDisplayLabel,
   getTranslators,
@@ -32,6 +33,8 @@ const translatorLangs = generateTranslatorLangs();
 interface TranslatorPopupProps {
   bookKey: string;
   text: string;
+  /** The text around the selection, for translators that can use it (LLMs). */
+  passage?: TranslationPassage;
   position: Position;
   trianglePosition: Position;
   popupWidth: number;
@@ -48,6 +51,7 @@ interface TranslatorType {
 const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
   bookKey,
   text,
+  passage,
   position,
   trianglePosition,
   popupWidth,
@@ -129,7 +133,7 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
 
       try {
         const input = text.replaceAll('\n', '').trim();
-        const result = await translate([input]);
+        const result = await translate([input], { passage });
         const translatedText = result[0];
         const detectedSource = null;
 

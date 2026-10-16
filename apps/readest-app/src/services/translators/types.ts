@@ -48,11 +48,23 @@ export interface TranslationProvider {
   ) => Promise<string[]>;
 }
 
+/** The text around a selection, so a word is translated as used there. */
+export interface TranslationPassage {
+  before: string;
+  after: string;
+}
+
 /** Book-level context forwarded to providers that can use it (LLMs). */
 export interface TranslationContext {
   promptId?: string;
   bookTitle?: string;
   bookAuthor?: string;
+  /**
+   * Set when the texts are a selection cut out of a page rather than whole
+   * paragraphs. Without it an LLM sees nothing but the word: "left" in "had
+   * been left to gather dust" came back as the direction.
+   */
+  passage?: TranslationPassage;
 }
 
 export interface TranslationCache {

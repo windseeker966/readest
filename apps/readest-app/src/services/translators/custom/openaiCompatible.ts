@@ -15,6 +15,10 @@ const REQUEST_TIMEOUT_MS = 60_000;
 
 const SINGLE_RULES =
   "Output only the translation of the user's text, without explanations, notes or quotation marks.";
+const PASSAGE_RULES =
+  'The user\'s message is JSON: "text" is an excerpt selected from the book, "before" and "after" are the passage around it. ' +
+  'Translate only "text", with the sense it has in that passage, keeping its form (a word stays a word, a phrase a phrase). ' +
+  'Output only the translation, without explanations, notes or quotation marks.';
 const batchRules = (n: number) =>
   `The user's text contains ${n} numbered blocks, each starting with a marker line like [n]. ` +
   `Translate every block and output exactly ${n} blocks in the same order, each starting with its original [n] marker line. ` +
@@ -52,6 +56,47 @@ export const createChatModel = async (config: CustomTranslator): Promise<Languag
     apiKey: config.apiKey || undefined,
     fetch: getAIFetch(),
   }).chatModel(config.model ?? '');
+};
+
+type GenerateTextOptions = Parameters<typeof import('ai').generateText>[0];
+
+/**
+ * DeepSeek's switch for its hybrid models: `deepseek-flash` reasons before
+ * answering unless told not to, which doubles the latency of a one-line
+ * translation and bills the reasoning as output. The provider spreads the
+ * `custom` options straight into the request body, so the switch reaches
+ * whichever endpoint the user configured; one that rejects unknown parameters
+ * (OpenAI answers 400 naming the argument) is remembered and asked without it.
+ */
+const NO_THINKING_OPTIONS = { custom: { thinking: { type: 'disabled' } } };
+const thinkingSwitchRejected = new Set<string>();
+
+const rejectsThinkingSwitch = (err: unknown): boolean => {
+  const { statusCode, responseBody, message } = err as {
+    statusCode?: number;
+    responseBody?: string;
+    message?: string;
+  };
+  return statusCode === 400 && /thinking/i.test(responseBody ?? message ?? '');
+};
+
+/** `generateText` with reasoning switched off where the endpoint allows it. */
+export const generateReply = async (
+  endpoint: string,
+  options: GenerateTextOptions,
+): Promise<string> => {
+  const [{ generateText }] = await loadSDK();
+  if (!thinkingSwitchRejected.has(endpoint)) {
+    try {
+      const { text } = await generateText({ ...options, providerOptions: NO_THINKING_OPTIONS });
+      return text;
+    } catch (err) {
+      if (!rejectsThinkingSwitch(err)) throw err;
+      thinkingSwitchRejected.add(endpoint);
+    }
+  }
+  const { text } = await generateText(options);
+  return text;
 };
 
 /** Splits a `[1]\n…\n\n[2]\n…` reply; returns null unless it holds exactly blocks 1..n. */
@@ -95,8 +140,7 @@ export const createOpenAICompatibleTranslator = (config: CustomTranslator): Tran
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const [{ generateText }] = await loadSDK();
-      const { text } = await generateText({
+      const text = await generateReply(config.baseUrl ?? '', {
         model: await getModel(),
         system,
         prompt,
@@ -182,13 +226,29 @@ export const createOpenAICompatibleTranslator = (config: CustomTranslator): Tran
     name: `${CUSTOM_TRANSLATOR_PREFIX}${config.id}`,
     label: config.name,
     concurrency: 16,
+    // The passage is part of the key: the same word means different things in
+    // different sentences, so a translation made for one must not serve another.
     getCacheKey: (sourceLang, targetLang, context) =>
       `${CUSTOM_TRANSLATOR_PREFIX}${config.id}#${md5Fingerprint(
-        `${config.model}\n${renderSystem(sourceLang, targetLang, context)}`,
+        `${config.model}\n${renderSystem(sourceLang, targetLang, context)}\n${
+          context?.passage ? `${context.passage.before}\u0000${context.passage.after}` : ''
+        }`,
       )}`,
     translate: async (texts, sourceLang, targetLang, _token, _useCache, signal, context) => {
       signal?.throwIfAborted();
       const system = renderSystem(sourceLang, targetLang, context);
+      // A selection is one request on its own: batching would strip the
+      // passage, and there is nothing to batch it with.
+      if (context?.passage) {
+        const { before, after } = context.passage;
+        return Promise.all(
+          texts.map((text) =>
+            text?.trim()
+              ? callModel(`${system}\n\n${PASSAGE_RULES}`, JSON.stringify({ text, before, after }))
+              : text,
+          ),
+        );
+      }
       const items: Item[] = [];
       const results = texts.map((text) => {
         if (!text?.trim()) return Promise.resolve(text);

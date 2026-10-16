@@ -153,6 +153,70 @@ describe('createOpenAICompatibleTranslator', () => {
     expect(generateTextMock).not.toHaveBeenCalled();
   });
 
+  // "left" in "had been left to gather dust" came back as the direction when
+  // the model saw nothing but the word.
+  it('translates a selection with its passage in one unbatched request', async () => {
+    generateTextMock.mockResolvedValue({ text: 'laissé' });
+    const t = createOpenAICompatibleTranslator(config);
+    const passage = { before: 'The equipment had been', after: 'to gather dust.' };
+    const [selected, paragraph] = await Promise.all([
+      t.translate(['left'], 'en', 'fr', null, false, undefined, { passage }),
+      t.translate(['A paragraph.'], 'en', 'fr'),
+    ]);
+    expect(selected).toEqual(['laissé']);
+    expect(paragraph).toEqual(['laissé']);
+    expect(generateTextMock).toHaveBeenCalledTimes(2);
+    const withPassage = generateTextMock.mock.calls.find(([args]) =>
+      (args as GenerateArgs).prompt.startsWith('{'),
+    )![0] as GenerateArgs;
+    expect(JSON.parse(withPassage.prompt)).toEqual({ text: 'left', ...passage });
+    expect(withPassage.system).toContain('"before" and "after"');
+    expect(withPassage.system).not.toContain('[n]');
+    expect(t.getCacheKey!('en', 'fr', { passage })).not.toBe(t.getCacheKey!('en', 'fr', {}));
+  });
+
+  // deepseek-flash reasons by default; a one-line translation waited on it.
+  it('asks the endpoint not to reason', async () => {
+    generateTextMock.mockResolvedValue({ text: 'Bonjour' });
+    const t = createOpenAICompatibleTranslator(config);
+    expect(await t.translate(['Hello'], 'en', 'fr')).toEqual(['Bonjour']);
+    expect(generateTextMock.mock.calls[0]![0]).toMatchObject({
+      providerOptions: { custom: { thinking: { type: 'disabled' } } },
+    });
+  });
+
+  it('drops the reasoning switch for an endpoint that rejects it', async () => {
+    generateTextMock
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Bad Request'), {
+          statusCode: 400,
+          responseBody: '{"error":{"message":"Unrecognized request argument supplied: thinking"}}',
+        }),
+      )
+      .mockResolvedValue({ text: 'Bonjour' });
+    const t = createOpenAICompatibleTranslator({
+      ...config,
+      baseUrl: 'https://strict.example.com/v1',
+    });
+    expect(await t.translate(['Hello'], 'en', 'fr')).toEqual(['Bonjour']);
+    expect(await t.translate(['Hi'], 'en', 'fr')).toEqual(['Bonjour']);
+    expect(generateTextMock).toHaveBeenCalledTimes(3);
+    expect(generateTextMock.mock.calls[1]![0]).not.toHaveProperty('providerOptions');
+    expect(generateTextMock.mock.calls[2]![0]).not.toHaveProperty('providerOptions');
+  });
+
+  it('surfaces a 400 that is not about the reasoning switch', async () => {
+    generateTextMock.mockRejectedValue(
+      Object.assign(new Error('Bad Request'), {
+        statusCode: 400,
+        responseBody: '{"error":{"message":"Model Not Exist"}}',
+      }),
+    );
+    const t = createOpenAICompatibleTranslator(config);
+    await expect(t.translate(['Hello'], 'en', 'fr')).rejects.toThrow('Bad Request');
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
+  });
+
   it('maps 401 responses to UNAUTHORIZED', async () => {
     generateTextMock.mockRejectedValue(Object.assign(new Error('bad key'), { statusCode: 401 }));
     const t = createOpenAICompatibleTranslator(config);
