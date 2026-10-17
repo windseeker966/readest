@@ -10,8 +10,8 @@ import type { CustomTranslator } from '@/types/translation';
 import { md5Fingerprint } from '@/utils/md5';
 import { getPromptTemplate } from '@/store/customTranslatorStore';
 import type { TranslationContext } from '../types';
-import { renderPrompt } from './prompts';
-import { PASSAGE_RULES, createChatModel, streamReply, stripReasoning } from './openaiCompatible';
+import { renderPrompt, toLanguageName } from './prompts';
+import { createChatModel, passageRules, streamReply, stripReasoning } from './openaiCompatible';
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const MAX_CACHE_ENTRIES = 100;
@@ -27,12 +27,13 @@ const MAX_CARD_CHARS = 48;
  * its base form or with no other sense worth noting gets a shorter card.
  */
 export const CARD_RULES = `The user's message is JSON: "text" is a word or short phrase selected from the book, "before" and "after" are the passage around it.
-Explain "text" as it is used in that passage. Write in {{targetLang}}, except the pronunciation and base form. Output only these lines, in this order, with these exact English labels and nothing else:
+Explain "text" as it is used in that passage. Output only these lines, in this order, with these exact English labels and nothing else:
 Pronunciation: IPA of "text" as written, between slashes, e.g. /ˈmuːlə/; for a phrase the whole phrase
-Meaning: part-of-speech abbreviation and a dictionary-style gloss of the sense in this passage — a few words, not a sentence, no grammar commentary; when "text" forms a set phrase with the words next to it, give the phrase and its gloss instead, e.g. "phr. figure out — work out"
-Base form: only when "text" is inflected — its dictionary form, IPA and the inflection, e.g. "leave /liːv/ (left is the past participle)"; omit this line otherwise
+Meaning: part-of-speech abbreviation and a dictionary-style gloss of the sense in this passage — a few words, not a sentence, no grammar commentary; when "text" forms a set phrase with the words next to it, give the phrase and its gloss instead
+Base form: only when "text" is inflected — its dictionary form and IPA, then in parentheses which form of it "text" is; omit this line otherwise
 Also: one or two other common senses of "text", each a part-of-speech abbreviation and a few words, separated by semicolons; omit this line when there is nothing worth noting
-Put nothing before the first label and do not repeat a label inside its value.`;
+Put nothing before the first label and do not repeat a label inside its value.
+Everything after a label is written in {{targetLang}} — the glosses, the parenthetical in Base form, the senses in Also — except the IPA and the dictionary form itself, which stay as they are in the book's language.`;
 
 export interface SelectionLookupInput extends TranslationContext {
   text: string;
@@ -107,7 +108,7 @@ export const lookupSelection = async (
     bookAuthor: input.bookAuthor,
   };
   const system = `${renderPrompt(getPromptTemplate(input.promptId), vars)}\n\n${
-    card ? renderPrompt(CARD_RULES, vars) : PASSAGE_RULES
+    card ? renderPrompt(CARD_RULES, vars) : passageRules(toLanguageName(input.targetLang))
   }`;
   const prompt = JSON.stringify({
     text: input.text,

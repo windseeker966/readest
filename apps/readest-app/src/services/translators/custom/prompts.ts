@@ -13,7 +13,7 @@ export interface PromptVars {
   bookAuthor?: string;
 }
 
-const toLanguageName = (code: string): string => {
+export const toLanguageName = (code: string): string => {
   if (!code || code.toUpperCase() === 'AUTO') return 'the source language';
   const short = normalizeToShortLang(code);
   if (short === 'zh-Hans') return 'Simplified Chinese';

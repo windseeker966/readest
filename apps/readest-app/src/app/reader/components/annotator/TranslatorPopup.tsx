@@ -78,13 +78,25 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
   const { token } = useAuth();
   const { envConfig } = useEnv();
   const { getViewSettings } = useReaderStore();
-  const { settings, setSettings } = useSettingsStore();
+  const { settings } = useSettingsStore();
   const [providers, setProviders] = useState<TranslatorType[]>([]);
   const [sourceLang, setSourceLang] = useState(
     getViewSettings(bookKey)?.translateSourceLang ?? 'AUTO',
   );
-  const [targetLang, setTargetLang] = useState(settings.globalReadSettings.translateTargetLang);
-  const [provider, setProvider] = useState(settings.globalReadSettings.translationProvider);
+  // The view settings are what the Language panel and inline translation use;
+  // reading `globalReadSettings` here (default target "EN") made the popup
+  // translate into English while the rest of the book was set to the system
+  // language, until its own dropdown was changed — and that change was never
+  // written to disk, so it came back after a restart. The old field is only
+  // a fallback for views that predate the setting.
+  const [targetLang, setTargetLang] = useState(
+    getViewSettings(bookKey)?.translateTargetLang ??
+      settings.globalReadSettings.translateTargetLang,
+  );
+  const [provider, setProvider] = useState(
+    getViewSettings(bookKey)?.translationProvider ??
+      settings.globalReadSettings.translationProvider,
+  );
   const [translation, setTranslation] = useState<string | null>(null);
   // Streamed card from an LLM translator; `translation` stays for the rest.
   const [entry, setEntry] = useState<SelectionEntry | null>(null);
@@ -111,10 +123,11 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
     saveViewSettings(envConfig, bookKey, 'translateSourceLang', event.target.value, true, false);
   };
 
+  // Saved the same way the Language panel saves them (to the book and, unless
+  // the book has its own settings, to every book), so the two stay in step.
   const handleTargetLangChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    settings.globalReadSettings.translateTargetLang = event.target.value;
-    setSettings(settings);
     setTargetLang(event.target.value);
+    saveViewSettings(envConfig, bookKey, 'translateTargetLang', event.target.value, false, false);
   };
 
   const handleProviderChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
@@ -125,9 +138,15 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
     const selectedTranslator =
       availableTranslators.find((t) => t.name === requestedProvider) || availableTranslators[0]!;
     if (selectedTranslator) {
-      settings.globalReadSettings.translationProvider = selectedTranslator.name;
-      setSettings(settings);
       setProvider(selectedTranslator.name);
+      saveViewSettings(
+        envConfig,
+        bookKey,
+        'translationProvider',
+        selectedTranslator.name,
+        false,
+        false,
+      );
     }
   };
 
