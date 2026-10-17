@@ -116,7 +116,11 @@ describe('lookupSelection', () => {
       new AbortController().signal,
     );
     expect(entry).toEqual({ translation: '器材被搁置在那里积灰。' });
-    expect((streamTextMock.mock.calls[0]![0] as StreamArgs).system).not.toContain('Base form:');
+    const { system } = streamTextMock.mock.calls[0]![0] as StreamArgs;
+    expect(system).not.toContain('Base form:');
+    // The rules name the target again at the end; the template alone let the
+    // model drift into answering in the book's language.
+    expect(system).toContain('The translation is in Simplified Chinese.');
   });
 
   it('serves a repeated lookup from the cache without a request', async () => {

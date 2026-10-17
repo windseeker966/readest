@@ -4,7 +4,7 @@ import { getPromptTemplate } from '@/store/customTranslatorStore';
 import { md5Fingerprint } from '@/utils/md5';
 import type { CustomTranslator } from '@/types/translation';
 import { ErrorCodes, TranslationContext, TranslationProvider } from '../types';
-import { renderPrompt } from './prompts';
+import { renderPrompt, toLanguageName } from './prompts';
 import { CUSTOM_TRANSLATOR_PREFIX } from './constants';
 
 const BATCH_DELAY_MS = 50;
@@ -13,16 +13,23 @@ const MAX_BATCH_CHARS = 3000;
 const MAX_INFLIGHT_BATCHES = 4;
 const REQUEST_TIMEOUT_MS = 60_000;
 
-const SINGLE_RULES =
-  "Output only the translation of the user's text, without explanations, notes or quotation marks.";
-export const PASSAGE_RULES =
+// Every rule block ends by naming the target language again: the template
+// above it names it once, at the top, and a model handed an English book,
+// English rules and an English passage drifted into answering in English
+// (a custom template may not even contain {{targetLang}}). `target` is the
+// language name, e.g. "Simplified Chinese".
+const singleRules = (target: string) =>
+  "Output only the translation of the user's text, without explanations, notes or quotation marks. " +
+  `The translation is in ${target}.`;
+export const passageRules = (target: string) =>
   'The user\'s message is JSON: "text" is an excerpt selected from the book, "before" and "after" are the passage around it. ' +
   'Translate only "text", with the sense it has in that passage, keeping its form (a word stays a word, a phrase a phrase). ' +
-  'Output only the translation, without explanations, notes or quotation marks.';
-const batchRules = (n: number) =>
+  'Output only the translation, without explanations, notes or quotation marks. ' +
+  `The translation is in ${target}.`;
+const batchRules = (n: number, target: string) =>
   `The user's text contains ${n} numbered blocks, each starting with a marker line like [n]. ` +
   `Translate every block and output exactly ${n} blocks in the same order, each starting with its original [n] marker line. ` +
-  'Output only the translations, without explanations or notes.';
+  `Output only the translations, without explanations or notes. Every translation is in ${target}.`;
 
 interface Item {
   text: string;
@@ -33,10 +40,15 @@ interface Item {
 
 interface PendingBatch {
   system: string;
+  /** Target language name, for the rules appended to `system`. */
+  target: string;
   items: Item[];
   chars: number;
   timer?: ReturnType<typeof setTimeout>;
 }
+
+/** Paragraphs batch together only when both the prompt and the target match. */
+const batchKey = (system: string, target: string) => `${system}\u0000${target}`;
 
 // Only a leading reasoning block: a book may legitimately quote `</think>`.
 // The AI SDK is loaded on first use: it pulls in Node-only modules at import
@@ -196,13 +208,13 @@ export const createOpenAICompatibleTranslator = (config: CustomTranslator): Tran
     }
   };
 
-  const translateBatch = async (system: string, items: Item[]) => {
+  const translateBatch = async (system: string, target: string, items: Item[]) => {
     if (items.length === 1) {
-      items[0]!.resolve(await callModel(`${system}\n\n${SINGLE_RULES}`, items[0]!.text));
+      items[0]!.resolve(await callModel(`${system}\n\n${singleRules(target)}`, items[0]!.text));
       return;
     }
     const prompt = items.map((item, i) => `[${i + 1}]\n${item.text}`).join('\n\n');
-    const reply = await callModel(`${system}\n\n${batchRules(items.length)}`, prompt);
+    const reply = await callModel(`${system}\n\n${batchRules(items.length, target)}`, prompt);
     const blocks = splitNumbered(reply, items.length);
     if (blocks) {
       items.forEach((item, i) => item.resolve(blocks[i]!));
@@ -212,7 +224,7 @@ export const createOpenAICompatibleTranslator = (config: CustomTranslator): Tran
     await Promise.all(
       items.map(async (item) => {
         try {
-          item.resolve(await callModel(`${system}\n\n${SINGLE_RULES}`, item.text));
+          item.resolve(await callModel(`${system}\n\n${singleRules(target)}`, item.text));
         } catch (err) {
           item.reject(err);
         }
@@ -226,7 +238,7 @@ export const createOpenAICompatibleTranslator = (config: CustomTranslator): Tran
       const items = batch.items.filter((item) => !item.cancelled);
       if (items.length === 0) continue;
       inflight++;
-      translateBatch(batch.system, items)
+      translateBatch(batch.system, batch.target, items)
         .catch((err) => items.forEach((item) => item.reject(err)))
         .finally(() => {
           inflight--;
@@ -235,28 +247,29 @@ export const createOpenAICompatibleTranslator = (config: CustomTranslator): Tran
     }
   };
 
-  const flush = (system: string) => {
-    const batch = pending.get(system);
+  const flush = (key: string) => {
+    const batch = pending.get(key);
     if (!batch) return;
     clearTimeout(batch.timer);
-    pending.delete(system);
+    pending.delete(key);
     queue.push(batch);
     pump();
   };
 
-  const enqueue = (system: string, item: Item) => {
-    const batch = pending.get(system);
+  const enqueue = (system: string, target: string, item: Item) => {
+    const key = batchKey(system, target);
+    const batch = pending.get(key);
     if (
       batch &&
       (batch.items.length >= MAX_BATCH_ITEMS || batch.chars + item.text.length > MAX_BATCH_CHARS)
     ) {
-      flush(system);
+      flush(key);
     }
-    let current = pending.get(system);
+    let current = pending.get(key);
     if (!current) {
-      current = { system, items: [], chars: 0 };
-      current.timer = setTimeout(() => flush(system), BATCH_DELAY_MS);
-      pending.set(system, current);
+      current = { system, target, items: [], chars: 0 };
+      current.timer = setTimeout(() => flush(key), BATCH_DELAY_MS);
+      pending.set(key, current);
     }
     current.items.push(item);
     current.chars += item.text.length;
@@ -277,6 +290,7 @@ export const createOpenAICompatibleTranslator = (config: CustomTranslator): Tran
     translate: async (texts, sourceLang, targetLang, _token, _useCache, signal, context) => {
       signal?.throwIfAborted();
       const system = renderSystem(sourceLang, targetLang, context);
+      const target = toLanguageName(targetLang);
       // A selection is one request on its own: batching would strip the
       // passage, and there is nothing to batch it with.
       if (context?.passage) {
@@ -284,7 +298,10 @@ export const createOpenAICompatibleTranslator = (config: CustomTranslator): Tran
         return Promise.all(
           texts.map((text) =>
             text?.trim()
-              ? callModel(`${system}\n\n${PASSAGE_RULES}`, JSON.stringify({ text, before, after }))
+              ? callModel(
+                  `${system}\n\n${passageRules(target)}`,
+                  JSON.stringify({ text, before, after }),
+                )
               : text,
           ),
         );
@@ -295,7 +312,7 @@ export const createOpenAICompatibleTranslator = (config: CustomTranslator): Tran
         return new Promise<string>((resolve, reject) => {
           const item: Item = { text, resolve, reject };
           items.push(item);
-          enqueue(system, item);
+          enqueue(system, target, item);
         });
       });
       const all = Promise.all(results);
