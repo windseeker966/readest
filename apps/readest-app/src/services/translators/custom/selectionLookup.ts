@@ -10,6 +10,7 @@ import type { CustomTranslator } from '@/types/translation';
 import { md5Fingerprint } from '@/utils/md5';
 import { getPromptTemplate } from '@/store/customTranslatorStore';
 import type { TranslationContext } from '../types';
+import { sentenceAround } from '@/utils/sentenceAround';
 import { renderPrompt, toLanguageName } from './prompts';
 import { createChatModel, passageRules, streamReply, stripReasoning } from './openaiCompatible';
 
@@ -26,8 +27,8 @@ const MAX_CARD_CHARS = 48;
  * shows its own localized labels. Each line is optional so a word already in
  * its base form or with no other sense worth noting gets a shorter card.
  */
-export const CARD_RULES = `The user's message is JSON: "text" is a word or short phrase selected from the book, "before" and "after" are the passage around it.
-Explain "text" as it is used in that passage. Output only these lines, in this order, with these exact English labels and nothing else:
+export const CARD_RULES = `The user's message is JSON: "text" is a word or short phrase selected from the book, "sentence" is the sentence it occurs in with the selection marked as «text», "before" and "after" are the passage around it.
+Explain «text» as it is used in that sentence. First decide its part of speech from how the sentence is built around it (the words right before and after it), then choose the sense that fits that part of speech in this passage; common senses that do not fit the sentence belong under Also. Output only these lines, in this order, with these exact English labels and nothing else:
 Pronunciation: IPA of "text" as written, between slashes, e.g. /ˈmuːlə/; for a phrase the whole phrase
 Meaning: part-of-speech abbreviation and a dictionary-style gloss of the sense in this passage — a few words, not a sentence, no grammar commentary; when "text" forms a set phrase with the words next to it, give the phrase and its gloss instead
 Base form: only when "text" is inflected — its dictionary form and IPA, then in parentheses which form of it "text" is; omit this line otherwise
@@ -110,11 +111,22 @@ export const lookupSelection = async (
   const system = `${renderPrompt(getPromptTemplate(input.promptId), vars)}\n\n${
     card ? renderPrompt(CARD_RULES, vars) : passageRules(toLanguageName(input.targetLang))
   }`;
-  const prompt = JSON.stringify({
-    text: input.text,
-    before: input.passage?.before ?? '',
-    after: input.passage?.after ?? '',
-  });
+  const before = input.passage?.before ?? '';
+  const after = input.passage?.after ?? '';
+  // The sentence with the selection marked is what fixes the part of speech:
+  // handed only the word and the passage as separate fields, the model read
+  // "one tiny little piercing" as the adjective 5 times out of 5; with the
+  // marked sentence it was the noun 5 times out of 5.
+  const prompt = JSON.stringify(
+    card
+      ? {
+          text: input.text,
+          sentence: sentenceAround(before, input.text, after, ['«', '»']),
+          before,
+          after,
+        }
+      : { text: input.text, before, after },
+  );
   const toEntry = (reply: string): SelectionEntry =>
     card ? parseSelectionEntry(reply) : { translation: visibleText(reply) };
 

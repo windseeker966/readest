@@ -103,7 +103,12 @@ describe('lookupSelection', () => {
     const args = streamTextMock.mock.calls[0]![0] as StreamArgs;
     expect(args.system).toContain('Simplified Chinese');
     expect(args.system).toContain('Base form:');
-    expect(JSON.parse(args.prompt)).toEqual({ text: 'left', ...input.passage });
+    expect(JSON.parse(args.prompt)).toEqual({
+      text: 'left',
+      sentence: 'The equipment had been «left» to gather dust.',
+      ...input.passage,
+    });
+    expect(args.system).toContain('part of speech');
     expect(args.providerOptions).toEqual({ custom: { thinking: { type: 'disabled' } } });
   });
 
