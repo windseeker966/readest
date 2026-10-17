@@ -8,27 +8,14 @@ import type { EnvConfigType } from '@/services/environment';
 import type { VocabEntry, VocabInput } from '@/types/vocab';
 import { uniqueId } from '@/utils/misc';
 
+export { sentenceAround } from '@/utils/sentenceAround';
+
 const VOCAB_FILE = 'vocab.json';
 
 let persistEnv: EnvConfigType | null = null;
 
 /** SubWord's key: trimmed, lower-cased, curly apostrophe straightened. */
 export const vocabKey = (word: string): string => word.trim().toLowerCase().replace(/’/g, "'");
-
-/**
- * The sentence a selection sits in: the passage before it back to the last
- * sentence end, the selection, and the passage after it up to the next one.
- */
-export const sentenceAround = (before: string, text: string, after: string): string => {
-  const head = before.split(/(?<=[.!?])\s+|(?<=[。！？])/).pop() ?? '';
-  const tail = after.match(/^[\s\S]*?(?:[.!?](?=\s|$)|[。！？])/)?.[0] ?? after;
-  // The passage comes trimmed, so the spaces either side of the selection are
-  // gone; put one back between two Latin words, never inside CJK text.
-  const latin = /[A-Za-zÀ-ɏ0-9]/;
-  const join = (left: string, right: string) =>
-    latin.test(left.slice(-1)) && latin.test(right.charAt(0)) ? `${left} ${right}` : left + right;
-  return join(join(head, text), tail).replace(/\s+/g, ' ').trim();
-};
 
 /** One LearningPack import object per line, oldest first, as SubWord exports. */
 export const vocabToJsonl = (entries: VocabEntry[]): string =>

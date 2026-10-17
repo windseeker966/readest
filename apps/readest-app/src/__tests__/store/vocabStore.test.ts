@@ -42,6 +42,16 @@ describe('sentenceAround', () => {
     expect(sentenceAround('器材被', 'left', '了。')).toBe('器材被left了。');
   });
 
+  it('marks the selection without disturbing the spacing around it', () => {
+    expect(sentenceAround('The equipment had been', 'left', 'to gather dust.', ['«', '»'])).toBe(
+      'The equipment had been «left» to gather dust.',
+    );
+    expect(sentenceAround('He said', '"left"', ', then went.', ['«', '»'])).toBe(
+      'He said«"left"», then went.',
+    );
+    expect(sentenceAround('器材被', '搁置', '了。', ['«', '»'])).toBe('器材被«搁置»了。');
+  });
+
   it('understands full-width sentence ends without a following space', () => {
     expect(sentenceAround('前一句。器材被', '搁置', '了。后一句。')).toBe('器材被搁置了。');
   });
