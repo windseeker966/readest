@@ -65,9 +65,9 @@ export const useVocabStore = create<VocabState>((set, get) => ({
 
   load: async (envConfig) => {
     persistEnv = envConfig;
-    const appService = await envConfig.getAppService();
     let entries: VocabEntry[] = [];
     try {
+      const appService = await envConfig.getAppService();
       if (await appService.exists(VOCAB_FILE, 'Settings')) {
         const text = (await appService.readFile(VOCAB_FILE, 'Settings', 'text')) as string;
         entries = (JSON.parse(text) as { entries?: VocabEntry[] }).entries ?? [];
