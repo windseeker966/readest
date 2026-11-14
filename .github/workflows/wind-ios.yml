@@ -79,8 +79,11 @@ jobs:
         working-directory: apps/readest-app
         run: |
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          # 有 project.yml 时 init 直接用它，就不会按模板生成 Readest_iOS/Info.plist，先删掉
+          rm src-tauri/gen/apple/project.yml
           pnpm tauri ios init --ci --config '{"identifier":"com.wind.readest"}'
           git checkout -- src-tauri/gen/apple
+          test -f src-tauri/gen/apple/Readest_iOS/Info.plist
           git status --short --ignored src-tauri/gen/apple
 
       - name: 生成去掉扩展的 Xcode 工程
