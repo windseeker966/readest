@@ -72,11 +72,21 @@ jobs:
         with:
           key: wind-ios-aarch64
 
+      # src-tauri/gen 被 .gitignore 忽略，仓库里只强制加了 project.yml、pbxproj 和自己写的源码，
+      # Sources/、Assets.xcassets、Readest_iOS/Info.plist 等要 tauri ios init 生成（Info.plist 的定制在 src-tauri/Info-ios.plist，编译时合并）。
+      # init 会覆盖跟踪的文件，生成完再还原成仓库里的版本
+      - name: tauri ios init
+        working-directory: apps/readest-app
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          pnpm tauri ios init --ci --config '{"identifier":"com.wind.readest"}'
+          git checkout -- src-tauri/gen/apple
+          git status --short --ignored src-tauri/gen/apple
+
       - name: 生成去掉扩展的 Xcode 工程
         working-directory: apps/readest-app/src-tauri/gen/apple
         run: |
           SPEC="$GITHUB_WORKSPACE/.wind-ios-main/.github/wind-ios"
-          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install -q pyyaml
           "$RUNNER_TEMP/venv/bin/python" -I "$SPEC/make_spec.py" project.yml project.wind.yml "$SPEC/Readest_iOS.entitlements"
