@@ -1,0 +1,110 @@
+name: iPad (wind)
+
+# 自用：编译 iPad 版，不签名，产物是 Readest_iOS.xcarchive（去掉了 dSYM），名字叫 Readest-xcarchive-<完整提交号>，保留 30 天。
+# 替代 Mac 上原来的 ~/.local/share/readest-ios/build-install.sh，改法一样：bundle id 改成 com.wind.readest，
+# 去掉分享扩展、小组件和免费 Apple ID 签不了的权限（见 .github/wind-ios/），图标换成仓库里的书本图标，Release 配置。
+# 免费 Apple ID 的描述文件只能在 Mac 上由 Xcode 申请、7 天到期，所以签名和安装在 Mac 上做：
+# `~/.local/share/readest-ios/resign.sh ci` 找到（或触发）Mac 上 HEAD 对应的构建，下载后签名并装到 iPad。
+# 手动编某个提交：gh workflow run wind-ios.yml -R windseeker966/readest -f ref=<提交号>
+# 这个 fork 里上游的其他 workflow 都已在 Actions 里禁用。
+
+run-name: iPad ${{ inputs.ref || github.sha }}
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 要编译的分支或提交号
+        default: main
+        required: true
+
+concurrency:
+  group: wind-ios-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    if: github.repository == 'windseeker966/readest'
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          submodules: recursive
+
+      # 工程改法以 main 上的为准（inputs.ref 可能是没有这些文件的旧提交）
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: .wind-ios-main
+          sparse-checkout: .github/wind-ios
+
+      - name: 记下提交号
+        run: |
+          echo "SOURCE_REV=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%s'
+
+      - name: 选择 Xcode 26.3
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app || { ls -d /Applications/Xcode*; exit 1; }
+          xcodebuild -version
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: 安装依赖
+        run: |
+          pnpm install --frozen-lockfile --prefer-offline
+          pnpm --filter @readest/readest-app setup-vendors
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wind-ios-aarch64
+
+      - name: 生成去掉扩展的 Xcode 工程
+        working-directory: apps/readest-app/src-tauri/gen/apple
+        run: |
+          SPEC="$GITHUB_WORKSPACE/.wind-ios-main/.github/wind-ios"
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q pyyaml
+          "$RUNNER_TEMP/venv/bin/python" -I "$SPEC/make_spec.py" project.yml project.wind.yml "$SPEC/Readest_iOS.entitlements"
+          env -u FORCE_COLOR xcodegen generate --spec project.wind.yml --project .
+          # tauri ios init 生成的 AppIcon 是 Tauri 默认图标，换成仓库里的书本图标
+          cp ../../icons/ios/*.png Assets.xcassets/AppIcon.appiconset/
+
+      - name: 编译（Release，不签名，只出 archive）
+        working-directory: apps/readest-app
+        run: |
+          pnpm exec dotenv -e .env.tauri -- pnpm tauri ios build --no-sign --archive-only \
+            --config '{"identifier":"com.wind.readest","bundle":{"iOS":{"developmentTeam":"786287C4WM"}}}'
+
+      - name: 打包 archive
+        run: |
+          ARCHIVE=apps/readest-app/src-tauri/gen/apple/build/Readest_iOS.xcarchive
+          [ -d "$ARCHIVE" ] || { echo "找不到 $ARCHIVE"; find apps/readest-app/src-tauri/gen/apple/build -maxdepth 2; exit 1; }
+          BUNDLE=$(plutil -extract ApplicationProperties.CFBundleIdentifier raw "$ARCHIVE/Info.plist")
+          [ "$BUNDLE" = com.wind.readest ] || { echo "bundle id 是 $BUNDLE，不是 com.wind.readest"; exit 1; }
+          rm -rf "$ARCHIVE/dSYMs"
+          mkdir -p out
+          ditto -c -k --keepParent "$ARCHIVE" out/Readest_iOS.xcarchive.zip
+          echo "$SOURCE_REV" > out/SOURCE_REV
+          ls -lh out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Readest-xcarchive-${{ env.SOURCE_REV }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
